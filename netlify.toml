@@ -1,0 +1,10 @@
+# netlify.toml
+[build]
+  command = "npm run build" # Or your build command
+  publish = "dist"          # Vite's default output directory
+  functions = "netlify/functions" # Directory for Netlify functions
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
