@@ -3,8 +3,10 @@ import {
     PayPalScriptProvider,
     PayPalButtons,
     ReactPayPalScriptOptions,
-    OnApproveData,
-    CreateOrderData,
+    // Removed: OnApproveData,
+    // Removed: CreateOrderData,
+    // You might still need action types if you interact with the 'actions' parameter directly
+    // e.g., import type { OnApproveActions, CreateOrderActions } from '@paypal/react-paypal-js';
 } from '@paypal/react-paypal-js';
 import axios from 'axios';
 import './App.css';
@@ -13,65 +15,71 @@ function App() {
     const [message, setMessage] = useState<string>('');
     const [error, setError] = useState<string>('');
 
-    // Get Client ID from environment variables
     const initialOptions: ReactPayPalScriptOptions = {
-        clientId: import.meta.env.VITE_PAYPAL_CLIENT_ID || 'test', // Use 'test' or fail loudly if not set
-        currency: 'USD', // Change as needed
+        clientId: import.meta.env.VITE_PAYPAL_CLIENT_ID || 'test',
+        currency: 'USD',
         intent: 'capture',
     };
 
-    // Function to call your Netlify function to create an order
-    const createOrder = async (data: CreateOrderData) => {
+    // Let TypeScript infer 'data' and 'actions' types from the context (PayPalButtons prop)
+    // The second parameter 'actions' provides functions like actions.order.capture() (if doing client-side capture)
+    // or actions.order.create() (if doing client-side creation). We are doing server-side, so we primarily use 'data'.
+    const createOrder = async (data: any, actions: any) => { // Use 'any' or remove type annotation entirely
         setMessage('Creating order...');
         setError('');
         try {
-            // Replace '/api/create-paypal-order' with your actual function endpoint
-            const response = await axios.post('/api/create-paypal-order', {
-                // You could pass cart details here if needed
-                // For minimal example, amount is hardcoded in the backend function
-            });
+            const response = await axios.post('/api/create-paypal-order', {});
             setMessage(`Order created with ID: ${response.data.orderID}`);
+            // The createOrder function for server-side integration must return the Order ID
             return response.data.orderID;
         } catch (err) {
             console.error('Error creating order:', err);
             setError('Failed to create PayPal order.');
             setMessage('');
-            // You might want to throw err here to stop the PayPal flow
-            throw err; // Rethrow or handle as needed
+            throw err; // Propagate error to PayPal SDK
         }
     };
 
-    // Function to call your Netlify function to capture the order
-    const onApprove = async (data: OnApproveData) => {
+    // Let TypeScript infer 'data' and 'actions' types
+    // 'data' contains { orderID: string, payerID?: string, etc. }
+    // 'actions' might contain actions.order.capture(), actions.redirect() etc.
+    const onApprove = async (data: any, actions: any) => { // Use 'any' or remove type annotation entirely
         setMessage(`Processing payment for order ${data.orderID}...`);
         setError('');
         try {
-            // Replace '/api/capture-paypal-order' with your actual function endpoint
+            // Use data.orderID which is passed by the PayPal script
             const response = await axios.post('/api/capture-paypal-order', {
                 orderID: data.orderID,
             });
 
-            // Handle success (e.g., show confirmation, redirect)
             console.log('Capture result:', response.data);
+            // Check the actual structure of response.data based on your Netlify function's return
+             const transactionId = response.data?.purchase_units?.[0]?.payments?.captures?.[0]?.id;
             setMessage(
-                `Payment Successful! Transaction ID: ${
-                    response.data.purchase_units[0]?.payments?.captures[0]?.id || 'N/A'
-                }`
+                `Payment Successful! ${transactionId ? `Transaction ID: ${transactionId}` : ''}`
             );
             setError('');
-             // Here you might update your application state, database, etc.
 
-        } catch (err) {
-            console.error('Error capturing order:', err);
-            setError('Failed to capture PayPal payment.');
-            setMessage('');
-             // Handle payment failure in your UI
+        } catch (err: any) { // Catch potential errors, including from axios response
+             console.error('Error capturing order:', err);
+             const errorMsg = err.response?.data?.message || err.message || 'Failed to capture PayPal payment.';
+             setError(errorMsg);
+             setMessage('');
+            // Optionally rethrow or handle specific PayPal errors (like INSTRUMENT_DECLINED)
+             if (err.response?.data?.name === 'INSTRUMENT_DECLINED') {
+                 // Handle declined payment, maybe using actions.restart() if applicable or showing a specific message
+                 console.warn("Payment instrument declined.")
+                 // return actions.restart(); // Example if using client-side flow actions
+             }
         }
     };
 
+
     const onError = (err: any) => {
         console.error('PayPal Button Error:', err);
-        setError('An error occurred with the PayPal payment.');
+        // Extract a more specific error message if available
+        const message = typeof err === 'object' && err !== null && 'message' in err ? err.message : 'An error occurred with the PayPal payment.';
+        setError(String(message)); // Ensure it's a string
         setMessage('');
     };
 
@@ -82,17 +90,18 @@ function App() {
             {message && <div style={{ color: 'blue' }}>Status: {message}</div>}
 
             <PayPalScriptProvider options={initialOptions}>
-                <PayPalButtons
-                    style={{ layout: 'vertical', color: 'blue', shape: 'rect', label: 'paypal' }}
-                    createOrder={createOrder}
-                    onApprove={onApprove}
-                    onError={onError}
-                    disabled={!initialOptions.clientId || initialOptions.clientId === 'test'} // Disable if no client ID
-                />
+                {(!initialOptions.clientId || initialOptions.clientId === 'test') ? (
+                     <p style={{color: 'orange'}}>Warning: PayPal Client ID not configured in .env file (VITE_PAYPAL_CLIENT_ID).</p>
+                ) : (
+                    <PayPalButtons
+                        style={{ layout: 'vertical', color: 'blue', shape: 'rect', label: 'paypal' }}
+                        createOrder={createOrder}
+                        onApprove={onApprove}
+                        onError={onError}
+                    />
+                 )}
             </PayPalScriptProvider>
-            {(!initialOptions.clientId || initialOptions.clientId === 'test') && (
-                 <p style={{color: 'orange'}}>Warning: PayPal Client ID not configured in .env file (VITE_PAYPAL_CLIENT_ID).</p>
-            )}
+
         </div>
     );
 }
